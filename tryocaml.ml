@@ -30,6 +30,7 @@ type tipo =
   | TyVar    of int   (* variáveis de tipo -- números *)
   | TyList   of tipo
   | TyMaybe  of tipo
+  | TyEither of tipo * tipo
                       
 type politipo = (int list) * tipo
   
@@ -45,6 +46,7 @@ let rec ftv (tp:tipo) : int list =
   | TyVar n      -> [n]
   | TyList t -> ftv t
   | TyMaybe t -> ftv t
+  | TyEither(t1,t2) -> (ftv t1) @ (ftv t2)
 
 
                    
@@ -59,6 +61,7 @@ let rec tipo_str (tp:tipo) : string =
   | TyVar  n        -> "X" ^ (string_of_int n)
   | TyList t        -> (tipo_str t) ^ " list" 
   | TyMaybe t       -> "maybe " ^ (tipo_str t)
+  | TyEither (t1,t2) -> "(" ^ "either" ^ (tipo_str t1) ^ " " ^ (tipo_str t2) ^ ")"
                              
   
 
@@ -87,12 +90,16 @@ type expr  =
   | Hd        of expr
   | Tl        of expr
   | IsEmpty   of expr
-  | PMList    of expr * expr
+  | PMList    of ident * ident * expr * expr * expr
   | Pipe      of expr * expr
   | Nothing 
   | Just      of expr
   | IsNothing of expr 
   | FromJust  of expr * expr
+  | Left      of expr
+  | Right     of expr
+  | PMLR      of ident * ident * expr * expr * expr
+    
   
 
 (* impressão legível de expressão *)
@@ -130,12 +137,15 @@ let rec expr_str (e:expr) : string  =
   | Hd e1 -> "Hd(" ^ (expr_str e1) ^ ")"
   | Tl e1 -> "Tl(" ^ (expr_str e1) ^ ")"
   | IsEmpty e1 -> "IsEmpty(" ^ (expr_str e1) ^ ")"
-  | PMList(e1,e2) -> "ListPatternMatching(" ^ (expr_str e1) ^ ", " ^ (expr_str e2) ^ ")" 
+  | PMList(x, xs, e1,e2, e3) -> "ListPatternMatching(" ^ (expr_str e1) ^ ", " ^ (expr_str e2) ^ (expr_str e3) ^")" 
   | Pipe (e1,e2) -> "(" ^ (expr_str e1) ^ " |> " ^ (expr_str e2) ^ ")"
   | Nothing -> "Nothing" 
   | Just e1 -> "Just(" ^ (expr_str e1) ^ ")"
   | IsNothing e1 -> "IsNothing(" ^ (expr_str e1) ^ ")"
   | FromJust(e1,e2) -> "FromJust(" ^ (expr_str e1) ^ " " ^ (expr_str e1) ^ ")"
+  | Left e1 -> "Left(" ^ (expr_str e1) ^ ")"
+  | Right e1 -> "Right(" ^ (expr_str e1) ^ ")"
+  | PMLR(x, y, e1,e2, e3) -> "LeftRightPatternMatching(" ^ (expr_str e1) ^ ", " ^ (expr_str e2) ^ (expr_str e3) ^")" 
                     
                                            
                           
@@ -225,6 +235,7 @@ let rec appsubs (s:subst) (tp:tipo) : tipo =
       | Some tp'    -> tp') 
   | TyList t          -> TyList(appsubs s t)
   | TyMaybe t         -> TyMaybe(appsubs s t)
+  | TyEither (t1,t2) -> TyEither(appsubs s t1, appsubs s t2)
                          
   
 
@@ -253,6 +264,7 @@ let rec var_in_tipo (v:int) (tp:tipo) : bool =
   | TyVar  x          -> v=x
   | TyList t          -> (var_in_tipo v t)
   | TyMaybe t         -> (var_in_tipo v t)
+  | TyEither(t1,t2)   -> (var_in_tipo v t1) || (var_in_tipo v t2) 
                          
 
 (* cria novas variáveis para politipos quando estes são instanciados *)
@@ -408,9 +420,14 @@ let rec collect (g:tyenv) (e:expr) : (equacoes_tipo * tipo)  =
       let tA = newvar() in 
       (c1@[(tp1, TyList(TyVar tA))], TyBool)
       
-   (*
-  | PMList(e1, e2) ->
-   *)
+  | PMList(x, xs, e1, e2, e3) ->
+      let(c1, tp1) = collect g e1 in
+      let(c2, tp2) = collect g e2 in
+      let tA = newvar() in
+      let g1 = (x,([],TyVar tA))::g in
+      let g2 = (xs,([],TyList(TyVar tA) ))::g1 in
+      let(c3, tp3) = collect g2 e3 in
+      (c1@c2@c3@[(tp1, TyList(TyVar tA));(tp2, tp3)], tp2)
       
   | Pipe (e1, e2) ->
       let (c1, tp1) = collect g e1 in
@@ -435,7 +452,30 @@ let rec collect (g:tyenv) (e:expr) : (equacoes_tipo * tipo)  =
   | FromJust (e1, e2) ->
       let (c1, tp1) = collect g e1 in
       let (c2, tp2) = collect g e2 in
-      (c1 @ c2, tp2)
+      (c1@c2@[(TyMaybe(tp1), tp2)], tp1)
+      
+  | Left (e1) ->
+      let (c1, tp1) = collect g e1 in
+      let tA = newvar () in
+      (c1, TyEither(tp1, TyVar tA))
+      
+  | Right (e1) ->
+      let (c1, tp1) = collect g e1 in
+      let tA = newvar () in
+      (c1, TyEither(TyVar tA, tp1))
+  
+  |PMLR (x, y, e1, e2, e3) ->
+      let(c1, tp1) = collect g e1 in
+      let tA = newvar() in
+      let tB = newvar() in
+      let g1 = (x,([],TyVar tA))::g in
+      let g2 = (y,([],TyVar tB))::g in
+      let(c2, tp2) = collect g1 e2 in
+      let(c3, tp3) = collect g2 e3 in
+      (c1@c2@c3@[(tp1, TyEither(TyVar tA, TyVar tB));(tp2, tp3)], tp2)
+      
+  
+      
   
       
       
@@ -487,6 +527,8 @@ type valor =
   | Vcons of valor * valor
   | Vnothing 
   | Vjust    of valor
+  | VLeft of valor
+  | VRight of valor
 and
   renv = (ident * valor) list
    
@@ -600,13 +642,31 @@ let rec eval (renv:renv) (e:expr) : valor =
        | _ -> raise BugTypeInfer 
       )
       
-  | PMList(e1, e2) ->
+  | PMList(x, xs, e1, e2, e3) ->
       let v1 = eval renv e1 in 
       let v2 = eval renv e2 in
-      (match v2 with
-       | Vnil -> VBool false
-       | Vcons (x, xs) ->
-           if (x = v1) then VBool true else (eval renv (PMList( e1, (Tl(e2)) )))
+      let v3 = eval renv e2 in
+      (match v1 with
+       | Vnil -> v2
+       | Vcons (x, xs) -> v3
+       | _ -> raise BugTypeInfer
+      )
+      
+  | Left(e1)->
+      let v1 = eval renv e1 in
+      VLeft(v1)
+        
+  | Right(e1)->
+      let v1 = eval renv e1 in
+      VRight(v1)
+        
+  |PMLR(x,y,e1,e2,e3) ->
+      let v1 = eval renv e1 in 
+      let v2 = eval renv e2 in
+      let v3 = eval renv e2 in
+      (match v1 with
+       | VLeft(x) -> v2
+       | VRight(y) -> v3
        | _ -> raise BugTypeInfer
       )
       
@@ -646,8 +706,9 @@ let rec eval (renv:renv) (e:expr) : valor =
        | Vnothing -> v2
        | Vjust v2 -> v2
        | _ -> raise BugTypeInfer
-      )
+      )        
       
+   
       
     
       
@@ -663,14 +724,7 @@ let l4  = Tl(l0)
 let l5  = Tl(l1)
 let l6  = IsEmpty(Nil)
 let l7  = IsEmpty(Cons(Num 1, Nil))
-let l8  = IsEmpty(Cons(Nil, Nil))
-let pml0 = PMList(Num 1, l0)
-let pml1 = PMList(Nil, l0)
-let pml2 = PMList(Num 2, l0)
-let pml3 = PMList(Num 1, l1)
-let pml4 = PMList(Num 2, l1)
-let pml5 = PMList(Num 4, l1)
-let pml6 = PMList(Nil, l1) 
+let l8  = IsEmpty(Cons(Nil, Nil)) 
 let p0  = Pipe(Num 5, Fn("x", Binop(Sum, Var "x", Num 10))) 
 let a0  = App(Fn("x", Binop(Sum, Var "x", Num 10)), Num 5)
 let a1  = App(Fn("x", Binop(Sum, Var "x", Num 10)), Binop(Sum, Num 1, Num 4))
@@ -680,5 +734,3 @@ let fj2 = FromJust(Just(Num 1), Num 2)
 let fj3 = FromJust(Just(App(Fn("x", Binop(Sum, Var "x", Num 10)), Num 5)), Num 2)
 
 
- 
- 
