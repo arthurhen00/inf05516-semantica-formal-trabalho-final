@@ -85,22 +85,23 @@ type expr  =
   | App       of expr * expr
   | Let       of ident * expr * expr           
   | LetRec    of ident * ident * expr * expr 
+  | Pipe      of expr * expr
   | Nil
   | Cons      of expr * expr
-  | Hd        of expr
-  | Tl        of expr
-  | IsEmpty   of expr
   | PMList    of ident * ident * expr * expr * expr
-  | Pipe      of expr * expr
   | Nothing 
   | Just      of expr
-  | IsNothing of expr 
-  | FromJust  of expr * expr
+  | PMJust    of ident * expr * expr * expr
   | Left      of expr
   | Right     of expr
   | PMLR      of ident * ident * expr * expr * expr
-  | PMJust    of ident * expr * expr * expr
-  
+                   (*
+                     | Hd        of expr
+                     | Tl        of expr
+                     | IsEmpty   of expr
+                     | IsNothing of expr 
+                     | FromJust  of expr * expr
+  *)
 (* impressão legível de expressão *)
      
 let rec expr_str (e:expr) : string  =
@@ -131,22 +132,23 @@ let rec expr_str (e:expr) : string  =
                      ^ (expr_str e2) ^ " )"
   | LetRec (f,x,e1,e2) -> "(let rec " ^ f ^ "= fn " ^ x ^ " => "
                           ^ (expr_str e1) ^ "\nin " ^ (expr_str e2) ^ " )"
+  | Pipe (e1,e2) -> "(" ^ (expr_str e1) ^ " |> " ^ (expr_str e2) ^ ")"
   | Nil -> "Nil"
   | Cons (e1,e2) -> (expr_str e1) ^ "::" ^ (expr_str e2)
-  | Hd e1 -> "Hd(" ^ (expr_str e1) ^ ")"
-  | Tl e1 -> "Tl(" ^ (expr_str e1) ^ ")"
-  | IsEmpty e1 -> "IsEmpty(" ^ (expr_str e1) ^ ")"
   | PMList(x, xs, e1,e2, e3) -> "ListPatternMatching(" ^ (expr_str e1) ^ ", " ^ (expr_str e2) ^ ", " ^ (expr_str e3) ^")" 
-  | Pipe (e1,e2) -> "(" ^ (expr_str e1) ^ " |> " ^ (expr_str e2) ^ ")"
   | Nothing -> "Nothing" 
   | Just e1 -> "Just(" ^ (expr_str e1) ^ ")"
-  | IsNothing e1 -> "IsNothing(" ^ (expr_str e1) ^ ")"
-  | FromJust(e1,e2) -> "FromJust(" ^ (expr_str e1) ^ " " ^ (expr_str e1) ^ ")"
+  | PMJust(x,e1,e2,e3) -> "JustPatternMatching(" ^ (expr_str e1) ^ ", " ^ (expr_str e2) ^ ", " ^ (expr_str e3) ^")" 
   | Left e1 -> "Left(" ^ (expr_str e1) ^ ")"
   | Right e1 -> "Right(" ^ (expr_str e1) ^ ")"
   | PMLR(x, y, e1,e2, e3) -> "LeftRightPatternMatching(" ^ (expr_str e1) ^ ", " ^ (expr_str e2) ^ ", " ^ (expr_str e3) ^")" 
-  | PMJust(x,e1,e2,e3) -> "JustPatternMatching(" ^ (expr_str e1) ^ ", " ^ (expr_str e2) ^ ", " ^ (expr_str e3) ^")" 
-                    
+                               (*
+                                 | Hd e1 -> "Hd(" ^ (expr_str e1) ^ ")"
+                                 | Tl e1 -> "Tl(" ^ (expr_str e1) ^ ")"
+                                 | IsEmpty e1 -> "IsEmpty(" ^ (expr_str e1) ^ ")"
+                                 | IsNothing e1 -> "IsNothing(" ^ (expr_str e1) ^ ")"
+                                 | FromJust(e1,e2) -> "FromJust(" ^ (expr_str e1) ^ " " ^ (expr_str e1) ^ ")"
+                    *)
                                            
                           
 
@@ -396,7 +398,14 @@ let rec collect (g:tyenv) (e:expr) : (equacoes_tipo * tipo)  =
 
       let (c2,tp2) = collect g' e2                          in
       (c1@[(tp1,TyVar tB)]@c2, tp2)
-      
+     
+  | Pipe (e1, e2) ->
+      let (c1, tp1) = collect g e1 in
+      let (c2, tp2) = collect g e2 in
+      let tA = newvar () in
+      let tFn = TyFn (tp1, TyVar tA) in
+      (c1 @ c2 @ [(tp2, tFn)], TyVar tA)      
+ 
   | Nil -> 
       let tA = newvar() in 
       ([], TyList (TyVar tA))
@@ -405,21 +414,6 @@ let rec collect (g:tyenv) (e:expr) : (equacoes_tipo * tipo)  =
       let (c1, tp1) = collect g e1 in
       let (c2, tp2) = collect g e2 in 
       (c1@c2@[(TyList(tp1), tp2)], tp2)
-      
-  | Hd (e1) ->
-      let (c1, tp1) = collect g e1 in
-      let tA = newvar() in 
-      (c1@[(tp1, TyList(TyVar tA))], TyVar tA)
-      
-  | Tl (e1) -> 
-      let (c1, tp1) = collect g e1 in
-      let tA = newvar() in 
-      (c1@[(tp1, TyList(TyVar tA))], TyList(TyVar tA))
-      
-  | IsEmpty (e1) ->
-      let (c1, tp1) = collect g e1 in
-      let tA = newvar() in 
-      (c1@[(tp1, TyList(TyVar tA))], TyBool)
       
   | PMList(x, xs, e1, e2, e3) ->
       let(c1, tp1) = collect g e1 in
@@ -430,13 +424,6 @@ let rec collect (g:tyenv) (e:expr) : (equacoes_tipo * tipo)  =
       let(c3, tp3) = collect g2 e3 in
       (c1@c2@c3@[(tp1, TyList(TyVar tA));(tp2, tp3)], tp2)
       
-  | Pipe (e1, e2) ->
-      let (c1, tp1) = collect g e1 in
-      let (c2, tp2) = collect g e2 in
-      let tA = newvar () in
-      let tFn = TyFn (tp1, TyVar tA) in
-      (c1 @ c2 @ [(tp2, tFn)], TyVar tA)
-      
   | Nothing -> 
       let tA = newvar() in 
       ([], TyMaybe (TyVar tA))
@@ -445,15 +432,13 @@ let rec collect (g:tyenv) (e:expr) : (equacoes_tipo * tipo)  =
       let (c1, tp1) = collect g e1 in 
       (c1, TyMaybe(tp1))
       
-  | IsNothing (e1) ->
-      let (c1, tp1) = collect g e1 in
+  | PMJust (x,e1,e2,e3) ->
       let tA = newvar() in 
-      (c1@[(tp1, TyMaybe(TyVar tA))], TyBool)
-      
-  | FromJust (e1, e2) ->
-      let (c1, tp1) = collect g e1 in
-      let (c2, tp2) = collect g e2 in
-      (c1@c2@[(TyMaybe(tp1), tp2)], tp1)
+      let(c1, tp1) = collect g e1 in
+      let(c2, tp2) = collect g e2 in
+      let g1 = (x,([],TyVar tA))::g in 
+      let(c3, tp3) = collect g1 e3 in
+      (c1@c2@c3@[(tp1, TyMaybe(TyVar tA));(tp2, tp3)], tp2) 
       
   | Left (e1) ->
       let (c1, tp1) = collect g e1 in
@@ -475,13 +460,35 @@ let rec collect (g:tyenv) (e:expr) : (equacoes_tipo * tipo)  =
       let(c3, tp3) = collect g2 e3 in
       (c1@c2@c3@[(tp1, TyEither(TyVar tA, TyVar tB));(tp2, tp3)], tp2)
       
-  | PMJust (x,e1,e2,e3) ->
-      let tA = newvar() in 
-      let(c1, tp1) = collect g e1 in
-      let(c2, tp2) = collect g e2 in
-      let g1 = (x,([],TyMaybe(TyVar tA)))::g in 
-      let(c3, tp3) = collect g1 e3 in
-      (c1@c2@c3@[(tp1, TyMaybe(TyVar tA));(tp2, tp3)], tp2) 
+        (*
+          | Hd (e1) ->
+            let (c1, tp1) = collect g e1 in
+            let tA = newvar() in 
+            (c1@[(tp1, TyList(TyVar tA))], TyVar tA)
+      
+          | Tl (e1) -> 
+            let (c1, tp1) = collect g e1 in
+            let tA = newvar() in 
+            (c1@[(tp1, TyList(TyVar tA))], TyList(TyVar tA))
+      
+          | IsEmpty (e1) ->
+            let (c1, tp1) = collect g e1 in
+            let tA = newvar() in 
+            (c1@[(tp1, TyList(TyVar tA))], TyBool)
+  
+          | IsNothing (e1) ->
+            let (c1, tp1) = collect g e1 in
+            let tA = newvar() in 
+            (c1@[(tp1, TyMaybe(TyVar tA))], TyBool)
+      
+          | FromJust (e1, e2) ->
+            let (c1, tp1) = collect g e1 in
+            let (c2, tp2) = collect g e2 in
+            (c1@c2@[(TyMaybe(tp1), tp2)], tp1)
+      *)
+  
+      
+  
   
 
 (* INFERÊNCIA DE TIPOS - CHAMADA PRINCIPAL *)
@@ -538,7 +545,7 @@ and
    
 exception BugTypeInfer
 exception DivZero
-exception EvalError of string
+exception Test of string
 
 let compute (oper: bop) (v1: valor) (v2: valor) : valor =
   match (oper, v1, v2) with
@@ -606,7 +613,7 @@ let rec eval (renv:renv) (e:expr) : valor =
            let renv''' = update renv'' f v1
            in eval renv''' ebdy
        | _ -> raise BugTypeInfer)
-
+  
   | Let(x,e1,e2) ->
       let v1 = eval renv e1
       in eval (update renv x v1) e2
@@ -615,76 +622,6 @@ let rec eval (renv:renv) (e:expr) : valor =
       let renv'= update renv f (VRclos(f,x,e1,renv))
       in eval renv' e2
         
-  | Nil -> Vnil
-    
-  | Cons(e1,e2) ->
-      let v1 = eval renv e1 in
-      let v2 = eval renv e2 in
-      Vcons(v1, v2)
-        
-  | Hd(e1) ->
-      let v1 = eval renv e1 in
-      (match v1 with
-       | Vnil -> Vnil
-       | Vcons(v1,_) -> v1
-       | _ -> raise BugTypeInfer
-      )
-      
-  | Tl(e1) ->
-      let v1 = eval renv e1 in
-      (match v1 with
-       | Vnil -> Vnil
-       | Vcons(_,v2) -> v2
-       | _ -> raise BugTypeInfer
-      )
-      
-  | IsEmpty(e1) ->
-      let v1 = eval renv e1 in
-      (match v1 with
-       | Vnil -> VBool true
-       | Vcons(_,_) -> VBool false
-       | _ -> raise BugTypeInfer 
-      )
-      
-  | PMList(x, xs, e1, e2, e3) ->
-      let v1 = eval renv e1 in 
-      let v2 = eval renv e2 in
-      let v3 = eval renv e3 in
-      (match v1 with
-       | Vnil -> v2
-       | Vcons (x, xs) -> v3
-       | _ -> raise BugTypeInfer
-      )
-      
-  | Left(e1)->
-      let v1 = eval renv e1 in
-      VLeft(v1)
-        
-  | Right(e1)->
-      let v1 = eval renv e1 in
-      VRight(v1)
-        
-  | PMLR(x,y,e1,e2,e3) ->
-      let v1 = eval renv e1 in 
-      let v2 = eval renv e2 in
-      let v3 = eval renv e3 in
-      (match v1 with
-       | VLeft(x) -> v2
-       | VRight(y) -> v3
-       | _ -> raise BugTypeInfer
-      )
-      
-  | PMJust(x,e1,e2,e3) ->
-      let v1 = eval renv e1 in 
-      let v2 = eval renv e2 in
-      let v3 = eval renv e3 in
-      (match v1 with
-       | Vnothing -> v2
-       | Vjust(x) -> v3
-       | _ -> raise BugTypeInfer
-      )
-  
-(* Usa o valor resultante de e1 como argumetno da funcao e2  *)
   | Pipe(e1, e2) ->
       let v1 = eval renv e1 in
       let v2 = eval renv e2 in
@@ -696,56 +633,163 @@ let rec eval (renv:renv) (e:expr) : valor =
            let renv''  = update renv' x v1 in
            let renv''' = update renv'' f v2
            in eval renv''' ebdy
-       | _ -> raise (EvalError "O segundo operando do Pipe deve ser uma função")
-      )
-  
+       | _ -> raise BugTypeInfer
+      )        
+
+  | Nil -> Vnil
+    
+  | Cons(e1,e2) ->
+      let v1 = eval renv e1 in
+      let v2 = eval renv e2 in
+      Vcons(v1, v2)
+        
+  | PMList(x, xs, e1, e2, e3) ->
+      let v1 = eval renv e1 in 
+      let v2 = eval renv e2 in 
+      (match v1 with
+       | Vnil -> v2
+       | Vcons (xv, xsv) -> 
+           let updated_renv = update (update renv x xv) xs xsv in
+           eval updated_renv e3
+       | _ -> raise BugTypeInfer)
+      
   | Nothing -> Vnothing
     
   | Just(e1) ->
       let v1 = eval renv e1 in
       Vjust(v1)
         
-  | IsNothing(e1) ->
-      let v1 = eval renv e1 in
-      (match v1 with
-       | Vnothing -> VBool true
-       | _        -> VBool false
-      )
-      
-  | FromJust(e1,e2) -> 
-      let v1 = eval renv e1 in
-      let v2 = eval renv e2 in
+  | PMJust(x,e1,e2,e3) ->
+      let v1 = eval renv e1 in 
+      let v2 = eval renv e2 in 
       (match v1 with
        | Vnothing -> v2
-       | Vjust v2 -> v2
+       | Vjust(xv) -> 
+           let updated_renv = update renv x xv in
+           eval updated_renv e3
        | _ -> raise BugTypeInfer
-      )        
+      )  
       
-  
-(*   Testes   *)
+  | Left(e1)->
+      let v1 = eval renv e1 in
+      VLeft(v1)
+        
+  | Right(e1)->
+      let v1 = eval renv e1 in
+      VRight(v1)
+        
+  | PMLR(x,y,e1,e2,e3) ->
+      let v1 = eval renv e1 in 
+      (match v1 with
+       | VLeft(xv) -> 
+           let updated_renv = update renv x xv in
+           eval updated_renv e2
+       | VRight(yv) -> 
+           let updated_renv = update renv y yv in
+           eval updated_renv e3
+       | _ -> raise BugTypeInfer
+      )
 
-let l0  = Cons(Num 1, Nil)
-let l1  = Cons(Num 1, Cons(Num 2, Cons(Num 3, Nil)))
-    
-let p0  = Pipe(Num 5, Fn("x", Binop(Sum, Var "x", Num 10)))
-let p1  = Pipe(Bool true, Fn("x", If(Var "x", Num 1, Num 2)))
-let p2  = Pipe(Bool false, Fn("x", If(Var "x", Num 1, Num 2)))
-    
-let a0  = App(Fn("x", Binop(Sum, Var "x", Num 10)), Num 5)
-let a1  = App(Fn("x", Binop(Sum, Var "x", Num 10)), Binop(Sum, Num 1, Num 4))
+        (*
+          | Hd(e1) ->
+            let v1 = eval renv e1 in
+            (match v1 with
+             | Vnil -> Vnil
+             | Vcons(v1,_) -> v1
+             | _ -> raise BugTypeInfer
+            )
+      
+          | Tl(e1) ->
+            let v1 = eval renv e1 in
+            (match v1 with
+             | Vnil -> Vnil
+             | Vcons(_,v2) -> v2
+             | _ -> raise BugTypeInfer
+            )
   
-let pml0  = PMList("x", "xs", Nil, Bool true, Bool false)
-let pml1  = PMList("x", "xs", Nil, Bool true, Num 2)
-let pml2  = PMList("x", "xs", Cons(Bool true, Nil), Num 1, Num 2)
-let pml3  = PMList("x", "xs", Cons(Bool true, Nil), Bool true, Num 2)
-let pml4  = PMList("x", "xs", Nil, Just(Bool true), Just(Bool false))
-let pml5  = PMList("x", "xs", Nil, Just(Bool true), Just(Num 1))
-let pml6  = PMList("x", "xs", Nil, Nil, Cons(Bool true, Nil))
-let pml7  = PMList("x", "xs", Nil, Nil, Cons(Left(Bool true), Cons(Right(Num 1) , Nil)))
-let pml8  = PMList("x", "xs", Cons(Bool true, Nil), Nil, Cons(Left(Num 1), Cons(Right(Bool true) , Nil)))
-let pml9  = PMList("x", "xs", Nil, Nothing, Just(Num 1))
-let pml10 = PMList("x", "xs", Nil, Nothing, Just(Left(Num 1)))
-    
+          | IsEmpty(e1) ->
+            let v1 = eval renv e1 in
+            (match v1 with
+             | Vnil -> VBool true
+             | Vcons(_,_) -> VBool false
+             | _ -> raise BugTypeInfer 
+            )
+  
+          | IsNothing(e1) ->
+            let v1 = eval renv e1 in
+            (match v1 with
+             | Vnothing -> VBool true
+             | _        -> VBool false
+            )
+      
+          | FromJust(e1,e2) -> 
+            let v1 = eval renv e1 in
+            let v2 = eval renv e2 in
+            (match v1 with
+             | Vnothing -> v2
+             | Vjust v2 -> v2
+             | _ -> raise BugTypeInfer
+            )        
+      *)
+  
+      (* Testes aut failed passed *)
+exception TestFailed of string
+
+let run_tests () =
+  let app0  = App(Fn("x", Binop(Sum, Var "x", Num 10)), Num 5) in
+  let app1  = App(Fn("x", Binop(Sum, Var "x", Num 10)), Binop(Sum, Num 1, Num 4)) in
+  let pipe0  = Pipe(Num 5, Fn("x", Binop(Sum, Var "x", Num 10))) in
+  let pipe1  = Pipe(Bool true, Fn("x", If(Var "x", Num 1, Num 2))) in 
+  let pipe2  = Pipe(Bool false, Fn("x", If(Var "x", Num 1, Num 2))) in
+  let pml0 = PMList("x", "xs", Cons(Num 1, Cons(Num 2, Cons(Num 3, Nil))), Num 0, Var "x") in
+  let pml1 = PMList("x", "xs", Cons(Num 1, Cons(Num 2, Cons(Num 3, Nil))), Num 1, Var "xs") in
+  let pml2 = PMList("x", "xs", Nil, Num 1, Num 2) in
+  let pml3 = PMList("x", "xs", Nil, Bool true, Bool false) in
+  let pml4 = PMList("x", "xs", Cons(Bool true, Nil), Num 1, Num 2) in
+  let pml5 = PMList("x", "xs", Nil, Just(Bool true), Just(Bool false)) in
+  let pml6 = PMList("x", "xs", Cons(Bool true, Nil), Just(Bool true), Just(Bool false)) in
+  let pml7 = PMList("x", "xs", Nil, Nil, Cons(Bool true, Nil)) in
+  let pml8 = PMList("x", "xs", Cons(Bool true, Nil), Nil, Cons(Bool true, Nil)) in
+  let pml9 = PMList("x", "xs", Nil, Nil, Cons(Left(Bool true), Cons(Right(Num 1) , Nil))) in
+  let pml10 = PMList("x", "xs", Cons(Bool true, Nil), Nil, Cons(Left(Num 1), Cons(Right(Bool true) , Nil))) in
+  let pml11 = PMList("x", "xs", Cons(Num 1, Nil), Nothing, Just(Num 1)) in
+  let pml12 = PMList("x", "xs", Cons(Num 1, Nil), Nothing, Just(Left(Num 1))) in
+  let pml13 = PMList("x", "xs", Nil, Nothing, Just(Num 1)) in 
+  let tests = [
+    ("app0", app0, VNum 15);
+    ("app1", app1, VNum 15);
+    ("pipe0", pipe0, VNum 15);
+    ("pipe1", pipe1, VNum 1);
+    ("pipe2", pipe2, VNum 2); 
+    ("pml0", pml0, VNum 1);
+    ("pml1", pml1, Vcons(VNum 2, Vcons(VNum 3, Vnil)));
+    ("pml2", pml2, VNum 1);
+    ("pml3", pml3, VBool true);
+    ("pml4", pml4, VNum 2);
+    ("pml5", pml5, Vjust (VBool true));
+    ("pml6", pml6, Vjust (VBool false));
+    ("pml7", pml7, Vnil);
+    ("pml8", pml8, Vcons(VBool true, Vnil));
+    ("pml9", pml9, Vnil);
+    ("pml10", pml10, Vcons( VLeft(VNum 1), Vcons(VRight(VBool true), Vnil ) ));
+    ("pml11", pml11, Vjust (VNum 1));
+    ("pml12", pml12, Vjust (VLeft(VNum 1)));
+    ("pml13", pml13, Vnothing);
+    (* Adicione mais testes aqui *)
+  ] in
+  List.iter (fun (test_name, expr, expected_result) ->
+      try
+        match (eval [] expr) with
+        | result when result = expected_result -> Printf.printf "%s passed\n" test_name 
+        | _ -> raise (TestFailed (test_name ^ " failed: unexpected result"))
+      with
+      | TestFailed msg -> print_endline (msg)
+      | _ -> ()
+    ) tests 
+  
+      
+(*   Testes   *) 
+
 let pmlr0 = PMLR("x", "y", Left(Bool true), Bool true, Bool false)
 let pmlr1 = PMLR("x", "y", Left(Num 1), Bool true, Bool false)
 let pmlr2 = PMLR("x", "y", Left(Bool true), Num 1, Bool false)
@@ -760,7 +804,8 @@ let pmj3 = PMJust("x", Just(Bool true), Bool true, Num 1)
 let pmj4 = PMJust("x", Nil, Bool true, Num 1) 
 let pmj5 = PMJust("x", Nothing, Bool true, Num 1) 
 let pmj6 = PMJust("x", Just(Num 1), Bool true, Num 1) 
-let pmj7 = PMJust("x", Just(Bool true), Bool true, Num 1) 
+let pmj7 = PMJust("x", Just(Bool true), Bool true, Num 1)
+let pmj8 = PMJust("x", Just(Num 1), Num 2, Var "x") 
   
 let t0 = If(Bool true, Num 1, Num 2)
 let t1 = If(Bool true, Num 1, Bool false)
@@ -768,10 +813,11 @@ let t2 = If(Bool true, Nil, Cons(Num 1, Nil))
 let t3 = If(Bool true, Left(Num 1), Right(Bool false))
 let t4 = If(Bool true, Nothing, Just(Num 1))
 let t5 = If(Bool true, Nothing, Just(Left(Num 1)))
-let t6 = If(Bool true, Nothing, Just(Right(Num 1)))
-  
+let t6 = If(Bool true, Nothing, Just(Right(Num 1))) 
     
 
+  
+    
 
 
 
